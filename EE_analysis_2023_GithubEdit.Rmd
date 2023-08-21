@@ -1,0 +1,797 @@
+---
+title: "Evil Eye Analysis Project for Github"
+author: "Madeleine Zoeller"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+##Setting up
+
+Restart
+```{r}
+rm(list= ls())
+```
+
+Loading packages
+```{r}
+library(umx)
+library(psych)
+library(matrixStats)
+library(effsize)
+library(psycho)
+library(finalfit)
+library(xtable)
+library(stargazer)
+library(MASS)
+library(MuMIn)
+library(estimatr)
+library(corpcor)
+library(GGally)
+library(AID)
+library(faraway)
+library(plyr)
+library(mvnmle)
+library(BaylorEdPsych)
+library(mice)
+library(lme4)
+library(readxl)
+library(gvlma)
+library(dplyr)
+library(tidyverse)
+library(moderndive)
+library(boxcoxmix)
+library(car)
+library(semPlot)
+library(lavaan)
+library(caret)
+library(car)
+library(faraway)
+library(alr3)
+library(ggcorrplot)
+
+
+```
+Reading in data
+```{r}
+ee_data <- read.csv("p5_english_num_EE_data_5_7_20_csv.csv", header = T, na.strings=c(""," ","<","NA"))
+```
+## Data Cleaning and processing
+
+Number of people from each country who were paid each amount
+```{r}
+#Need number of participants by country (before bot check 483)
+
+country <- select(ee_data, language)
+
+fr <-  ee_data %>% filter(language == "French") %>% nrow()
+
+fr
+
+#195 french
+
+sp <-  ee_data %>% filter(language == "Spanish") %>% nrow()
+sp
+
+#261 spanish
+
+por <-  ee_data %>% filter(language == "Portuguese") %>% nrow()
+
+por
+#18 portuguese
+
+pol <-  ee_data %>% filter(language == "Polish") %>% nrow()
+
+pol
+#9 polish
+```
+
+Removing subjects who failed the bot check
+```{r}
+nrow(ee_data)
+view(ee_data)
+#removing rows that failed the bot check question
+ee_data_bc <- ee_data %>%
+  filter( botcheck == "None" )
+View(ee_data_bc)
+nrow(ee_data_bc)
+ncol(ee_data_bc)
+#50 people failed the bot check, 433 remain
+
+
+```
+Removing tedious variables and changing certain NAs
+```{r}
+View(ee_data_bc)
+ee_data_bc <- ee_data_bc[, -c(1,2,37:49)]
+
+#changing NAs in children to 0 
+ee_data_bc$children[is.na(ee_data_bc$children)] <- 0
+sum(is.na(ee_data_bc$children))
+
+View(ee_data_bc)
+
+sum(is.na(ee_data_bc)) #43 NAs left
+
+```
+Removing other NAs (Data was not missing completely at random)
+```{r}
+#Before removing NAs
+nrow(ee_data_bc)
+#433 rows
+sum(is.na(ee_data_bc))
+#43 NAs
+
+#At this point, the best option is probably ommitting all NAs
+ee_nona_data_bc <- na.omit(ee_data_bc)
+
+nrow(ee_nona_data_bc)
+
+#395 rows left 
+
+#rename to make code less clunky
+
+ee_final <- ee_nona_data_bc
+```
+Adding participant ID numbers and getting demographics for methods section
+```{r}
+#add participant numbers
+ee_final$row_num <- seq.int(nrow(ee_final))
+
+View(ee_final)
+
+#gender
+ee_final %>% filter(gender == "Woman") %>% nrow()
+
+#130 women
+ee_final %>% filter(gender == "Man") %>% nrow()
+
+#263 men
+ee_final %>% filter(gender == "Other") %>% nrow()
+#2 Other
+
+#average age
+
+mean(ee_final$age)
+
+sd(ee_final$age)
+
+#French
+ee_final %>% filter(language == "French") %>% nrow()
+
+ee_final %>% filter(language == "Spanish") %>% nrow()
+
+ee_final %>% filter(language == "Polish") %>% nrow()
+
+ee_final %>% filter(language == "Portuguese") %>% nrow()
+```
+Putting income as a numeric 
+```{r}
+
+is.data.frame(ee_final)
+
+
+ee_final$income <- as.numeric(as.character(ee_final$income))
+
+class(ee_final$income)
+
+is.numeric(ee_final$age)
+
+#NAs introduced by above process, code below fixes it
+
+any(is.na(ee_final$income))
+
+ee_final$income
+
+str(ee_final)
+
+#names of columns with missing values
+#https://stackoverflow.com/questions/20364450/find-names-of-columns-which-contain-missing-values
+
+colnames(ee_final)[colSums(is.na(ee_final)) > 0]
+
+ee_final$income[is.na(ee_final$income)] <- 0
+
+any(is.na(ee_final$income))
+
+```
+Converting Baymul Income inequality visual into gini coefficients, adding gini_17, and making gini_error
+```{r}
+#did it this way because of code issues with factors down the line
+ee_final <- as_tibble(ee_final)
+
+
+is_tibble(ee_final)
+
+
+ee_final <- ee_final %>% mutate(gini_baymul_num = ifelse(gini_baymul %in% "A", .42,ifelse(gini_baymul %in% "B", .35,ifelse(gini_baymul %in% "C", .30, ifelse(gini_baymul %in% "D", .20, ifelse(gini_baymul %in% "E", .21, 0))))))
+View(ee_final)
+
+
+
+
+  
+ee_final <- ee_final %>% mutate(gini_17 = ifelse(language %in% "Portuguese", .338,ifelse(language %in% "Spanish", .347,ifelse(language %in% "French", .316, ifelse(language %in% "Polish", .297, 0)))))
+
+
+ee_final <- mutate(ee_final, gini_error = gini_baymul_num - gini_17)
+
+
+```
+Adjusting reverse coded questions
+```{r}
+ee_final <- ee_final %>% mutate(ii1_st = ifelse(ii1_rc %in% 5, 1, ifelse(ii1_rc %in% 4, 2, ifelse(ii1_rc %in% 3, 3, ifelse(ii1_rc %in% 2, 4, ifelse(ii1_rc %in% 1, 5, NA))))))
+
+#higher values of srd3_rc and srd4_rc should become lower values
+ee_final <- ee_final %>% mutate(srd3_st = ifelse(srd3_rc %in% 5, 1, ifelse(srd3_rc %in% 4, 2, ifelse(srd3_rc %in% 3, 3, ifelse(srd3_rc %in% 2, 4, ifelse(srd3_rc %in% 1, 5, 0))))))
+
+
+ee_final <- ee_final %>% mutate(srd4_st = ifelse(srd4_rc %in% 5, 1, ifelse(srd4_rc %in% 4, 2, ifelse(srd4_rc %in% 3, 3, ifelse(srd4_rc %in% 2, 4, ifelse(srd4_rc %in% 1, 5, 0))))))
+
+```
+Creating Summary Variables
+```{r}
+#creating summary variables 
+
+ee_final <- ee_final %>%
+  mutate(bzsg_sum = bzsg1 +bzsg2 + bzsg3,
+         srd_sum = srd1 + srd2 + srd3_st + srd4_st,
+         ee_sum = ee1 + ee2 + ee3 + ee4 + ee5 + ee6 + ee7 + ee8 + ee9 + ee10, ii_sum = ii2 + ii1_st,  bjw_sum = bjw_nature + bjw_god + bjw_deserve + bjw_chance + bjw_nr, theft_sum = theft1 + theft2 + theft3, cii = courts1 + police1 + courts2 + police2)
+
+
+
+#higher values of bzsg indicate higher belief, higher values of srd indicate feeling more deprived, higher values of ee indicate greater belief in ee, higher values of ii indicate high percieved inequality in their vicinity, higher bjw means more belief in a just world
+#cii= confidence in institutions (court and police)
+
+```
+Converting income to USD using PPP then creating income per household member in PPP dollars
+```{r}
+#PPP
+#https://www.open.edu/openlearn/science-maths-technology/mathematics-and-statistics/how-compare-income-across-countries
+
+
+
+#PPP conversion factors
+#ppp_cf is ppp conversion factor
+
+#France
+#.77
+
+#Portugal
+#.59
+
+#Poland
+#1.78
+#Spain
+#.65
+
+#might need to transform language responses to English 
+
+
+
+ee_final <- mutate(ee_final, ppp_cf = ifelse(language %in% "French", .77, ifelse(language %in% "Spanish", .65, ifelse( language %in% "Portugese", .59, ifelse(language %in% "Polish", 1.78, 0)))))
+
+
+
+
+ee_final <- mutate(ee_final, inc_ppp = income * ppp_cf)
+
+ee_final <- mutate(ee_final, inc_ppp_pp = inc_ppp/household_size)
+
+
+
+#removing NaN created 
+
+ee_final$inc_ppp_pp[is.na(ee_final$inc_ppp_pp)] <- 0
+
+#removing other NAs created
+ee_final[is.na(ee_final)] <- 0
+
+#removing infinity and negative infinity
+ee_final$inc_ppp_pp[is.infinite(ee_final$inc_ppp_pp)] <- 0
+```
+## Data analysis
+###Models
+Model 1
+```{r}
+#regular model
+lm1 <- lm(ee_sum ~ bzsg_sum + srd_sum + ii_sum + age + inc_ppp_pp + cii + theft_sum + language + gini_baymul + bjw_sum + children + edu, data = ee_final)
+
+summary(lm1)
+
+
+
+#robust model
+#gini_baymul
+lm1_r <- lm_robust(ee_sum ~ bzsg_sum + srd_sum + ii_sum + age + inc_ppp_pp + cii + theft_sum + language + gini_baymul + bjw_sum + children + edu + gender, data = ee_final)
+
+
+#gini_error
+lm2_r <- lm_robust(ee_sum ~ bzsg_sum + srd_sum + ii_sum + age + inc_ppp_pp + cii + theft_sum + language + gini_error + bjw_sum + children + edu + gender, data = ee_final)
+
+
+
+
+ee_final %>% filter(language == "French") %>% nrow()
+```
+AIC/BIC
+```{r}
+
+library(MASS)
+MASS::stepAIC(lm1, scale = 0,
+        direction = c("both", "backward", "forward"),
+        trace = 1, keep = NULL, steps = 1000, use.start = FALSE,
+        k = 2)
+
+#interpreting AIC values
+#https://ashutoshtripathi.com/2019/06/10/what-is-stepaic-in-r/
+
+#AIC vs BIC
+#http://www.differencebetween.net/miscellaneous/difference-between-aic-and-bic/
+
+```
+New model based on stepAIC
+```{r}
+
+final_model <- lm_robust(formula = ee_sum ~ srd_sum + cii + theft_sum + language +  bjw_sum + children, data = ee_final)
+
+summary(final_model)
+
+r2 <- .1963
+
+f2 <- r2/(1-r2)
+f2
+```
+Looking at robust model more closely
+```{r}
+#Portugal and Poland have smaller residuals (and they are symmetric) than France and Spain
+
+library("car")
+
+residualPlot(lm1, groups = "language")
+
+plot(residuals(lm1), col = ee_final$language, xlab = "language")
+
+plot(residuals(lm1), col = ee_final$language)
+
+
+
+
+residualPlots(lm1)
+```
+
+
+
+
+
+## Basic Descriptive Statistics
+###Mean and SD of all numerics
+```{r}
+
+#age
+
+mean(ee_final$age)
+
+sd(ee_final$age)
+
+#bzsg
+
+mean(ee_final$bzsg_sum)
+
+sd(ee_final$bzsg_sum)
+
+#bjw
+
+mean(ee_final$bjw_sum)
+
+sd(ee_final$bjw_sum)
+
+#cii
+mean(ee_final$cii)
+
+sd(ee_final$cii)
+
+#children
+
+mean(ee_final$children)
+
+sd(ee_final$children)
+
+#age
+
+mean(ee_final$age)
+sd(ee_final$age)
+
+#srd
+
+mean(ee_final$srd_sum)
+
+sd(ee_final$srd_sum)
+
+#local inequality
+
+mean(ee_final$ii_sum)
+
+sd(ee_final$ii_sum)
+
+#experiences with theft
+
+mean(ee_final$theft_sum)
+
+sd(ee_final$theft_sum)
+
+#ee sum
+mean(ee_final$ee_sum)
+sd(ee_final$ee_sum)
+```
+###Mean and SD of EE components
+```{r}
+is.data.frame(ee_final)
+View(ee_final)
+ee_items <- ee_final %>% select(ee1, ee2, ee3, ee4, ee5, ee6, ee7, ee8, ee9, ee10)
+
+
+View(ee_items)
+ee_i_m <- as.matrix(ee_items)
+ee_means <- colMeans(ee_i_m)
+ee_sds <- colSds(ee_i_m)
+
+View(ee_means)
+View(ee_sds)
+
+View(ee_sds)
+View(ee_means)
+
+
+ee_sds_r <- round(ee_sds, digits = 2)
+ee_means_r <- round(ee_means, digits = 2)
+View(ee_sds_r)
+
+
+View(ee_means_r)
+
+
+
+
+
+library(dplyr)
+
+##bleh
+ee_items <- as.matrix(ee_items)
+
+
+
+#merging columns 
+install.packages("matrixStats")
+library(matrixStats)
+is.data.frame(ee_items)
+
+view(ee_items)
+
+colSds(ee_items)
+?colSds
+ee_means <- colMeans(ee_items)
+
+mean(ee_final$ee1)
+sd(ee_final$ee1)
+View(ee_means)
+
+ee_sds <- 
+
+```
+###Mean and SD of II components
+```{r}
+ii_items <- ee_final %>% select(ii1_rc, ii1_st, ii2, ii_sum)
+
+View(ii_items)
+
+
+#ii sum is ii1_st + ii2
+
+mean(ii_items$ii1_st)
+sd(ii_items$ii1_st)
+
+mean(ii_items$ii2)
+sd(ii_items$ii2)
+
+##below attempts at fanciness
+#get ii items
+
+ii_items <- ee_final %>% select(ii1_rc, ii2)
+View(ii_items)
+
+is.data.frame(ii_items)
+class(ii_items)
+
+#try to make a data frame with items, mean and sd of item
+ 
+ii_stats <- ii_items %>% summarise(mean = mean(ii_items), sd = sd(ii_items))
+
+#try making ii_items a matrix?
+
+ii_items_m <- as.matrix(ii_items)
+
+class(ii_items_m)
+
+mean(ii_items)
+#did not work 
+
+## perhaps time to switch back to other method?
+
+##Ex mean(ii_items$ii1_rc)
+
+mean(ii_items$ii1_rc)
+```
+###Mean and SD of CII components
+```{r}
+View(ee_final)
+
+cii_items <- ee_final %>% select(police1, police2, courts1, courts2)
+
+mean(cii_items$police1)
+sd(cii_items$police1)
+
+mean(cii_items$police2)
+sd(cii_items$police2)
+
+mean(cii_items$courts1)
+sd(cii_items$courts1)
+
+mean(cii_items$courts2)
+sd(cii_items$courts2)
+```
+###Mean and SD of SRD components
+```{r}
+View(ee_final)
+
+srd_items <- ee_final %>% select(srd1, srd2, srd3_st, srd4_st)
+
+mean(srd_items$srd1)
+sd(srd_items$srd1)
+
+mean(srd_items$srd2)
+sd(srd_items$srd2)
+
+mean(srd_items$srd3_st)
+sd(srd_items$srd3_st)
+
+mean(srd_items$srd4_st)
+sd(srd_items$srd4_st)
+```
+###Mean and SD of BZSG 3 components
+```{r}
+bzsg_items <- ee_final %>% select(bzsg1, bzsg2, bzsg3)
+
+mean(bzsg_items$bzsg1)
+sd(bzsg_items$bzsg1)
+
+mean(bzsg_items$bzsg2)
+sd(bzsg_items$bzsg2)
+
+mean(bzsg_items$bzsg3)
+sd(bzsg_items$bzsg3)
+```
+
+###Mean and SD of Theft components
+```{r}
+theft_items <- ee_final %>% select(theft1, theft2, theft3)
+
+mean(theft_items$theft1)
+sd(theft_items$theft1)
+
+mean(theft_items$theft2)
+sd(theft_items$theft2)
+
+mean(theft_items$theft3)
+sd(theft_items$theft3)
+```
+###Mean and SD of BJW 5 components
+```{r}
+bjw_items <- ee_final %>% select(bjw_nature, bjw_god, bjw_nr, bjw_deserve, bjw_chance)
+
+mean(bjw_items$bjw_nature)
+sd(bjw_items$bjw_nature)
+
+mean(bjw_items$bjw_god)
+sd(bjw_items$bjw_god)
+
+mean(bjw_items$bjw_nr)
+sd(bjw_items$bjw_nr)
+
+mean(bjw_items$bjw_deserve)
+sd(bjw_items$bjw_deserve)
+
+mean(bjw_items$bjw_chance)
+sd(bjw_items$bjw_chance)
+```
+#Additional analyses
+###Cronbach's Alpha
+```{r}
+#interpreting cronbach's alpha
+#http://pioneer.netserv.chula.ac.th/~ppongsa/2013605/Cronbach.pdf
+
+#As a rule of thumb, a Cronbach’s alpha of .50 – .80 is usually considered an acceptable value (Field, 2010; Setbon & Raude, 2010), with considerably lower values indicating lack of reliability.
+
+#http://www.neilmclatchie.com/using-r-cronbachs-alpha/
+#https://www.bing.com/videos/search?q=making+table+for+cronbach+alpha+results&&view=detail&mid=4E5B62E3AED97E71CD0A4E5B62E3AED97E71CD0A&&FORM=VRDGAR&ru=%2Fvideos%2Fsearch%3Fq%3Dmaking%2Btable%2Bfor%2Bcronbach%2Balpha%2Bresults%26qs%3Dn%26form%3DQBVR%26sp%3D-1%26pq%3Dmaking%2Btable%2Bfor%2Bcronbach%2Balpha%2Bresult%26sc%3D0-38%26sk%3D%26cvid%3D1E433D4AEB6E40558DEBA38161BED665
+
+
+ee_i_m <- data.matrix(ee_items)
+
+is.matrix(ee_i_m)
+alpha(ee_items, n.var= 10)
+?alpha
+
+install.packages("psych")
+library(psych)
+
+#https://www.bing.com/videos/search?q=cronbach%27s+alpha+in+r+youtube&docid=608024166374967704&mid=4E9425AC8986FA0195664E9425AC8986FA019566&view=detail&FORM=VIRE
+
+#2 methods
+
+install.packages("umx")
+library(umx)
+
+#figuring it out with EE
+
+ee_i_m <- data.matrix(ee_items)
+
+is.matrix(ee_i_m)
+
+reliability(cov(ee_i_m))
+
+?reliability
+#above did not work?
+
+#2nd method
+#alpha using psych 
+library(psych)
+#alpha(ee_i_m)
+#the output: what the actual fuck
+
+
+#BELOW WORKS
+ee_i_m <- data.matrix(ee_items)
+
+is.data.frame(ee_items)
+
+is.matrix(ee_i_m)
+
+umx::reliability(cov(ee_i_m))
+
+#EE
+
+
+#CII
+
+umx::reliability(cov(cii_items))
+#SRD
+umx::reliability(cov(srd_items))
+#Theft
+umx::reliability(cov(theft_items))
+
+#BJW
+umx::reliability(cov(bjw_items))
+
+#BZSG
+umx::reliability(cov(bzsg_items))
+
+#II
+
+```
+##Correlation Matrix
+```{r}
+#new correlation matrix 
+cm_lm1_r <- ee_final %>% dplyr::select(c(ee_sum, bzsg_sum, cii, theft_sum, bjw_sum, srd_sum, ii_sum))
+
+vars <- data.matrix(cm_lm1_r)
+var_t <- cor(vars)
+
+View(var_t)
+
+class(var_t)
+```
+##New Correlation Matrix graphs
+```{r}
+
+#colorblind friendly graphs from package
+#
+
+https://www.rdocumentation.org/packages/colorblindr
+
+
+#info on plots
+#http://jamesmarquezportfolio.com/correlation_matrices_in_r.html
+
+#GGsally
+
+var_t <- as.data.frame(var_t)
+viz_var_t <- ggpairs(var_t)
+View(var_t)
+?ggpairs
+var_num <- var_t[,]
+viz_var_t
+View(viz_var_t)
+
+#example from site
+#ggcorr(mydata, nbreaks=8, palette='RdGy', label=TRUE, label_size=5, label_color='white')
+
+ggcorr(var_t, nbreaks=8, palette='RdGy', label=TRUE, label_size=2, label_color='white')
+
+
+#another example from site
+library(ggcorrplot)
+
+ggcorrplot(cor(var_t), p.mat = cor_pmat(var_t), hc.order=TRUE, type='lower')
+
+ggcorrplot(cor(var_t), hc.order=TRUE, type='lower')
+
+
+#correlations
+ee_bjw <- ee_final[,24:28]
+ee_bjw$ee_sum <- ee_final$ee_sum
+View(ee_bjw)
+
+#ee and bjw components
+
+ggcorr(ee_bjw, nbreaks=8, palette='RdGy', label=TRUE, label_size=2, label_color='white')
+
+
+#just using key numeric variables
+
+
+
+cm_lm1_r <- ee_final %>% dplyr::select(c(ee_sum, bzsg_sum, cii, theft_sum, bjw_sum, srd_sum, ii_sum))
+
+vars <- data.matrix(cm_lm1_r)
+
+
+
+ggcorr(vars, nbreaks=8, palette='RdGy', label=TRUE, label_size=2, label_color='white')
+
+View(ee_final)
+
+#bzsg and ee
+
+bzsg_ee <- ee_final %>% select(bzsg1, bzsg2, bzsg3, ee_sum)
+
+ggcorr(bzsg_ee, nbreaks=8, palette='RdGy', label=TRUE, label_size=2, label_color='white')
+
+#srd
+srd_ee <- ee_final %>% select(srd1, srd2, srd3_st, srd4_st, ee_sum)
+
+ggcorr(srd_ee, nbreaks=8, palette='RdGy', label=TRUE, label_size=2, label_color='white')
+
+#I feel deprived was best predictor of EE_sum from srd (2)
+
+#ii
+
+ii_ee <- ee_final %>% select(ii1_st, ii2, ee_sum)
+
+ggcorr(ii_ee, nbreaks=8, palette='RdGy', label=TRUE, label_size=2, label_color='white')
+
+#awkwardly my two items are not super correlated (.3)
+
+#cii
+cii_ee <- ee_final %>% select(police1, police2, courts1, courts2, ee_sum)
+
+ggcorr(cii_ee, nbreaks=8, palette='RdGy', label=TRUE, label_size=2, label_color='white')
+
+#theft
+theft_ee <- ee_final %>% select(theft1, theft2, theft3, ee_sum)
+
+ggcorr(theft_ee, nbreaks=8, palette='RdGy', label=TRUE, label_size=2, label_color='white')
+View(ee_final)
+
+View(ee_final)
+
+#correlations between summaries of elements within the final model
+
+f_m <- ee_final %>% select(ee_sum, children, srd_sum, theft_sum, cii, bjw_sum)
+ggcorr(f_m, nbreaks=8, palette='RdGy', label=TRUE, label_size=2, label_color='white')
+View(ee_final)
+```
+
+
+
+
